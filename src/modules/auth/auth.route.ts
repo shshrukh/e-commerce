@@ -1,7 +1,9 @@
 import { Router } from "express";
+import { validateSchema } from "../../middlewares/zodValidation.middleware.js";
+import { loginSchema } from "./auth.validator.js";
 
 const authRouter = Router();
 
 
-authRouter.route("login").post();
+authRouter.route("login").post( validateSchema(loginSchema, "body"), );
 

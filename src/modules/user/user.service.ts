@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { pool } from "../../config/db.js";
 import { ConflictError } from "../../Errors/ConflictError.js";
 import { InternalServerError } from "../../Errors/InternalServerError.js";
+import { hashSecret } from "../../utils/hash.js";
 
 type RegisterUserPayload = {
     first_name: string;
@@ -17,12 +18,6 @@ type RegisteredUser = {
     email: string;
 };
 
-const hashPassword = (password: string): string => {
-    const salt = crypto.randomBytes(16).toString("hex");
-    const hash = crypto.pbkdf2Sync(password, salt, 100_000, 64, "sha512").toString("hex");
-
-    return `${salt}:${hash}`;
-};
 
 const registerUserService = async (payload: RegisterUserPayload): Promise<RegisteredUser> => {
     const { first_name, last_name, email, password } = payload;
@@ -54,7 +49,7 @@ const registerUserService = async (payload: RegisterUserPayload): Promise<Regist
             throw new InternalServerError("Unable to create user");
         }
 
-        const passwordHash = hashPassword(password);
+        const passwordHash =  hashSecret(password);
 
         await client.query(
             "INSERT INTO auth (user_id, email, password_hash) VALUES ($1, $2, $3)",

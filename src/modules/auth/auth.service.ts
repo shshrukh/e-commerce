@@ -1,56 +1,56 @@
-import { asyncHandler } from "../../handlers/AsyncHandlder.js";
-import crypto from "node:crypto";
+
 import { pool } from "../../config/db.js";
-import { email } from "zod";
-import { NotFoundError } from "../../Errors/NotFoundError.js";
 import { UnauthorizedError } from "../../Errors/UnauthorizedError.js";
+import { generateAccessToken, generateRefreshToken } from "../../utils/JWTToken.js";
+import { verifySecret } from "../../utils/hash.js";
 
 
 
 
-type loginUser = {
+type LoginUser = {
     email: string,
-    password: string
+    password: string,
+    ipAddress?: string;
+    userAgent?: string;
 }
 
-const loginAuthService = async (payload: loginUser): Promise<void> => {
+
+
+const loginAuthService = async (payload: LoginUser): Promise<void> => {
 
     const { email, password } = payload
 
-    function comparePassword(password: string, storedPassword: string): boolean {
-
-        const [salt, storedHash] = storedPassword.split(":");
-
-        if (!salt || !storedHash) {
-            return false;
-        }
-        const hash = crypto
-            .pbkdf2Sync(password, salt, 100_000, 64, "sha512")
-            .toString("hex");
-
-        return crypto.timingSafeEqual(
-            Buffer.from(hash, "hex"),
-            Buffer.from(storedHash, "hex")
-        );
-    }
-
     try {
 
-        const restult = await pool.query("SELECT password_hash FROM auth WHERE email = $1", [email]);
+        const result = await pool.query(
+            `SELECT a.user_id, a.email, a.password_hash, u.role FROM auth AS a JOIN users AS ON a.user_id = u.id WHERE a.email = $1`,
+            [email]
+        );
 
-        if(restult.rowCount === 0){
-            throw new NotFoundError("invalid email");
+        if (result.rowCount === 0) {
+            throw new UnauthorizedError("Invalid credentials");
         }
-        const hashPassword = restult.rows[0].password_hash;
 
-        const isPasswordCorrect = comparePassword( password, hashPassword);
-        if(!isPasswordCorrect){
-            throw new UnauthorizedError("invalid credientials")
+        const user = result.rows[0];
+
+        const isPasswordCorrect = verifySecret(password, user.password_hash);
+
+        if (!isPasswordCorrect) {
+            throw new UnauthorizedError("Invalid credentials");
         }
-        //create the access token and refresh token 
+
+        const userId = user.user_id;
+        const role = user.role;
+        const access_token = generateAccessToken({id: userId, role}, process.env.ACCESSTOKENSECRET as string);
+        const refresh_token = generateRefreshToken({id: userId, role}, process.env.REFRESHTOKENSECRET as string);
+        const hashRefreshToken = 
+
+        await pool.query("INSERT INTO sessions (user_id, refresh_token_hash, ip-address, user-agent, expire-at) VALUES( $1, $2, $3, $4, $5)", [userId, refresh_token])
+
+
 
     } catch (
     ) {
-        
+
     }
 };

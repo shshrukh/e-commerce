@@ -6,5 +6,7 @@ import { loginAuth } from "./auth.controller.js";
 const authRouter = Router();
 
 
-authRouter.route("login").post( validateSchema(loginSchema, "body"), loginAuth);
+authRouter.route("/login-user").post( validateSchema(loginSchema, "body"), loginAuth);
+
+export {authRouter};
 

@@ -33,8 +33,7 @@ const registerUserService = async (payload: RegisterUserPayload): Promise<Regist
         "SELECT id FROM auth WHERE email = $1",
         [email]
     );
-    console.log(existingUser);
-
+   
 
     if (existingUser.rowCount && existingUser.rowCount > 0) {
         throw new ConflictError("User with this email already exists");

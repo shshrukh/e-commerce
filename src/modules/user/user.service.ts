@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import { pool } from "../../config/db.js";
 import { ConflictError } from "../../Errors/ConflictError.js";
 import { InternalServerError } from "../../Errors/InternalServerError.js";
@@ -49,7 +48,7 @@ const registerUserService = async (payload: RegisterUserPayload): Promise<Regist
             throw new InternalServerError("Unable to create user");
         }
 
-        const passwordHash =  hashSecret(password);
+        const passwordHash =  await hashSecret(password);
 
         await client.query(
             "INSERT INTO auth (user_id, email, password_hash) VALUES ($1, $2, $3)",

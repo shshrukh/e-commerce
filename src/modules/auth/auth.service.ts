@@ -1,7 +1,7 @@
 
 import { pool } from "../../config/db.js";
 import { UnauthorizedError } from "../../Errors/UnauthorizedError.js";
-import { generateAccessToken, generateRefreshToken } from "../../utils/JWTToken.js";
+import { generateJWTToken } from "../../utils/JWTToken.js";
 import { hashSecret, verifySecret } from "../../utils/hash.js";
 import { InternalServerError } from "../../Errors/InternalServerError.js";
 
@@ -45,8 +45,31 @@ const loginAuthService = async (payload: LoginUser): Promise<LoginResult> => {
 
         const userId = user.user_id;
         const role = user.role;
-        const access_token = generateAccessToken({ id: userId, role }, process.env.ACCESSTOKENSECRET as string);
-        const refresh_token = generateRefreshToken({ id: userId, role }, process.env.REFRESHTOKENSECRET as string);
+
+        const access_token = generateJWTToken(
+            {
+                id: userId,
+                role
+            },
+            process.env.ACCESSTOKENSECRET as string,
+            {
+                expiresIn: "15m",
+                issuer: "test-web-app",
+                audience: "test-audience-web"
+            }
+        );
+
+        const refresh_token = generateJWTToken(
+            {
+                id: userId,
+                role
+            },
+            process.env.REFRESHTOKENSECRET as string,
+            {
+                expiresIn: "15d",
+            }
+        );
+        
         const hashRefreshToken = await hashSecret(refresh_token);
         const refreshTokenExpire = new Date(
             Date.now() + (7 * 24 * 60 * 60 * 1000)

@@ -1,4 +1,3 @@
-// @ts-ignore: No declaration file for './app.js'
 import { app } from "./app.js";
 import { connectDB, closeDB} from "./config/db.js";
 import { runMigrations } from "./dataBase/migrations/migrate.js";

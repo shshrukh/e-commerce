@@ -1,36 +1,36 @@
 import jwt from "jsonwebtoken";
-import { verify } from "node:crypto";
+import { UnauthorizedError } from "../Errors/UnauthorizedError.js";
+import type { JwtPayload } from "jsonwebtoken";
+import { string } from "zod";
+
+export interface AuthPayload extends JwtPayload{
+    id: string;
+    role: "user" | "admin";
+}
 
 type JWTPayload = {
-    id: number;
-    role: string;
+    id: string;
+    role: "user" | "admin";
 }
 
 
-const generateAccessToken = (payload: JWTPayload, secretKey: string): string => {
-    const token: string = jwt.sign(
-        payload,
-        secretKey,
-        {
-            expiresIn: '15m',
-            issuer: "test-web-app",
-            audience: "test-audience-web"
-        }
-    );
-    return token
-}; 
+const generateJWTToken = (payload: JWTPayload, secretKey: string, options: jwt.SignOptions) => {
+    return jwt.sign(payload, secretKey, options)
+};
 
 
-const generateRefreshToken = (payload: JWTPayload, secretKey: string): string =>{
-    const token: string = jwt.sign(
-        payload,
-        secretKey,
-        {
-            expiresIn: '7d',
+const verifyJWTToken = (token: string, secretKey: string): AuthPayload =>{
+    try {
+        const decoded =jwt.verify(token, secretKey);
+
+        if(typeof decoded === "string"){
+            throw new UnauthorizedError("Invalid authentication token");
         }
-    );
-    return token
+        
+        return decoded as AuthPayload;
+
+    } catch (error) {
+        throw new UnauthorizedError("Invalid or expired authentication token");
+    }
 }
-
-
-export { generateAccessToken,  generateRefreshToken}
+export { generateJWTToken, verifyJWTToken }

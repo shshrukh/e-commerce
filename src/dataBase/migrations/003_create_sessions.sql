@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 
     refresh_token_hash TEXT NOT NULL,
 
+    selector TEXT NOT NULL UNIQUE,
+
     ip_address INET,
 
     user_agent TEXT,

@@ -11,6 +11,7 @@ export interface AuthPayload extends JwtPayload{
 type JWTPayload = {
     id: string;
     role: "user" | "admin";
+    selector?: string
 }
 
 
@@ -19,7 +20,7 @@ const generateJWTToken = (payload: JWTPayload, secretKey: string, options: jwt.S
 };
 
 
-const verifyJWTToken = (token: string, secretKey: string): AuthPayload =>{
+const verifyJWTToken = (token: string, secretKey: string): JWTPayload =>{
     try {
         const decoded =jwt.verify(token, secretKey);
 

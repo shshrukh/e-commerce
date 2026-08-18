@@ -1,7 +1,9 @@
 import { pool } from "../../config/db.js";
 import { ConflictError } from "../../Errors/ConflictError.js";
 import { InternalServerError } from "../../Errors/InternalServerError.js";
+import { UnauthorizedError } from "../../Errors/UnauthorizedError.js";
 import { hashSecret } from "../../utils/hash.js";
+import type { AuthPayload } from "../../utils/JWTToken.js";
 
 type RegisterUserPayload = {
     first_name: string;
@@ -25,6 +27,14 @@ type CreatedUser = {
     role: string;
 };
 
+type CurrentUserDetails = {
+    id: string;
+    first_name: string;
+    last_name: string;
+    avatart: string | undefined;
+    email: string;
+ }
+
 
 const registerUserService = async (payload: RegisterUserPayload): Promise<RegisteredUser> => {
     const { first_name, last_name, email, password } = payload;
@@ -33,7 +43,7 @@ const registerUserService = async (payload: RegisterUserPayload): Promise<Regist
         "SELECT id FROM auth WHERE email = $1",
         [email]
     );
-   
+
 
     if (existingUser.rowCount && existingUser.rowCount > 0) {
         throw new ConflictError("User with this email already exists");
@@ -91,4 +101,30 @@ const registerUserService = async (payload: RegisterUserPayload): Promise<Regist
     }
 };
 
-export { registerUserService };
+const getCurrentUserService = async (payload: AuthPayload): Promise<CurrentUserDetails> => {
+    const userId = payload?.id;
+
+    const user = await pool.query(
+        `SELECT
+        u.id,
+        u.first_name,
+        u.last_name,
+        u.avatar,
+        a.email
+        FROM users u
+        JOIN auth a ON a.user_id = u.id
+        WHERE u.id = $1`,
+        [ userId ]
+    )
+
+    if(user.rowCount === 0){
+        throw new UnauthorizedError("User profile not found");
+    }
+
+    const data: CurrentUserDetails = user.rows[0]
+
+    return data
+
+};
+
+export { registerUserService, getCurrentUserService };

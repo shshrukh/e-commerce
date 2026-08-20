@@ -19,11 +19,11 @@ const getCurrentUser = asyncHandler(async (req: Request, res: Response, next: Ne
         throw new UnauthorizedError("You are not authenticated");
     }
 
-    const data = await getCurrentUserService(payload);
+    const currentUser = await getCurrentUserService(payload);
     res.status(201).json({
         success: true,
         message: "Current user retrieved successfully",
-        data: {data}
+        data: {currentUser}
     });
 });
 

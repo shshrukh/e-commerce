@@ -15,7 +15,8 @@ const userDetailSchema = z.object(
             .max(15, "First name should have at most 15 characters")
             .regex(/^[a-zA-Z]+$/, "First name can only contain letters")
             .toLowerCase()
-            .trim(),
+            .trim()
+            .optional(),
         email: z
             .email("Please enter the valid email")
             .trim()

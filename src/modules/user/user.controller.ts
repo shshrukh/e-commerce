@@ -23,7 +23,7 @@ const getCurrentUser = asyncHandler(async (req: Request, res: Response, next: Ne
     res.status(201).json({
         success: true,
         message: "Current user retrieved successfully",
-        data
+        data: {data}
     });
 });
 

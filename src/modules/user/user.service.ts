@@ -1,3 +1,4 @@
+import { da } from "zod/locales";
 import { pool } from "../../config/db.js";
 import { ConflictError } from "../../Errors/ConflictError.js";
 import { InternalServerError } from "../../Errors/InternalServerError.js";
@@ -7,7 +8,7 @@ import type { AuthPayload } from "../../utils/JWTToken.js";
 
 type RegisterUserPayload = {
     first_name: string;
-    last_name: string;
+    last_name?: string;
     email: string;
     password: string;
 };
@@ -15,7 +16,7 @@ type RegisterUserPayload = {
 type RegisteredUser = {
     id: number;
     first_name: string;
-    last_name: string;
+    last_name?: string | null;
     email: string;
     role: string
 };
@@ -23,17 +24,17 @@ type RegisteredUser = {
 type CreatedUser = {
     id: number;
     first_name: string;
-    last_name: string;
+    last_name: string | null;
     role: string;
 };
 
 type CurrentUserDetails = {
     id: string;
     first_name: string;
-    last_name: string;
-    avatart: string | undefined;
+    last_name: string | null;
+    avatar: string | undefined;
     email: string;
- }
+}
 
 
 const registerUserService = async (payload: RegisterUserPayload): Promise<RegisteredUser> => {
@@ -56,7 +57,7 @@ const registerUserService = async (payload: RegisterUserPayload): Promise<Regist
 
         const userResult = await client.query<CreatedUser>(
             "INSERT INTO users (first_name, last_name) VALUES ($1, $2) RETURNING id, first_name, last_name, role",
-            [first_name, last_name]
+            [first_name, last_name ?? null]
         );
 
         const user: CreatedUser | undefined = userResult.rows[0];
@@ -79,11 +80,14 @@ const registerUserService = async (payload: RegisterUserPayload): Promise<Regist
 
         return {
             id: userId,
-            first_name,
-            last_name,
+            first_name: user.first_name,
+            last_name: user.last_name,
             email,
             role
         };
+
+
+
     } catch (error) {
         await client.query("ROLLBACK");
 
@@ -114,14 +118,22 @@ const getCurrentUserService = async (payload: AuthPayload): Promise<CurrentUserD
         FROM users u
         JOIN auth a ON a.user_id = u.id
         WHERE u.id = $1`,
-        [ userId ]
+        [userId]
     )
 
-    if(user.rowCount === 0){
+    if (user.rowCount === 0) {
         throw new UnauthorizedError("User profile not found");
     }
 
-    const data: CurrentUserDetails = user.rows[0]
+    const data: CurrentUserDetails = user.rows[0];
+
+    if(!data.avatar){
+        data.avatar = data.first_name.charAt(0);
+        if(data.last_name){
+            data.avatar += data.last_name.charAt(0);
+        }
+    }
+    
 
     return data
 

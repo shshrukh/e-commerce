@@ -1,9 +1,9 @@
 import { v2 as cloudinary } from "cloudinary";
-import type { cloudinaryConfig } from "../types/types.js";
+import type { CloudinaryConfig } from "../types/types.js";
 
 
 
-const cloudinaryConfigOptions: cloudinaryConfig = {
+const cloudinaryConfigOptions: CloudinaryConfig = {
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME!,
     api_key: process.env.CLOUDINARY_API_KEY!,
     api_secret: process.env.CLOUDINARY_API_SECRET!
@@ -21,6 +21,8 @@ cloudinary.config({
 
 
 export {cloudinary};
+
+
 
 
 

@@ -8,3 +8,9 @@ export type dataBaseConfig = {
     min: number;
     idleTimeoutMillis: number;
 }
+
+export type CloudinaryConfig = {
+    cloud_name: string; 
+    api_key: string;
+    api_secret: string;
+}

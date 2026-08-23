@@ -14,3 +14,16 @@ export type CloudinaryConfig = {
     api_key: string;
     api_secret: string;
 }
+
+
+export type CloudinaryUploadOptions = {
+    folder?: string;
+    publicId?: string;
+};
+
+export type CloudinaryUploadResult = {
+    publicId: string;
+    secureUrl: string;
+    format: string;
+    bytes: number;
+};

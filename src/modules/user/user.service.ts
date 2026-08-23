@@ -1,10 +1,11 @@
-import { da } from "zod/locales";
 import { pool } from "../../config/db.js";
 import { ConflictError } from "../../Errors/ConflictError.js";
 import { InternalServerError } from "../../Errors/InternalServerError.js";
 import { UnauthorizedError } from "../../Errors/UnauthorizedError.js";
 import { hashSecret } from "../../utils/hash.js";
 import type { AuthPayload } from "../../utils/JWTToken.js";
+import { uploadImageToCloudinary, deleteImageFromCloudinary } from "../../utils/uploadImageCloudinary.js";
+import { NotFoundError } from "../../Errors/NotFoundError.js";
 
 type RegisterUserPayload = {
     first_name: string;
@@ -34,6 +35,11 @@ type CurrentUserDetails = {
     last_name: string | null;
     avatar: string | undefined;
     email: string;
+}
+
+type UpdateProfilePayload = {
+    userId: string;
+    image: Buffer;
 }
 
 
@@ -139,4 +145,83 @@ const getCurrentUserService = async (payload: AuthPayload): Promise<CurrentUserD
 
 };
 
-export { registerUserService, getCurrentUserService };
+const updateProfileImageService = async (payload:UpdateProfilePayload ): Promise<void> => {
+    const { userId, image } = payload;
+
+    const userResult = await pool.query<{
+        avatarPublicId: string | null;
+    }>(
+        `
+        SELECT avatar_public_id AS "avatarPublicId"
+        FROM users
+        WHERE id = $1
+          AND deleted_at IS NULL
+        `,
+        [userId],
+    );
+
+    const user = userResult.rows[0];
+
+    if (!user) {
+        throw new NotFoundError("User not found");
+    };
+
+    const oldAvatarPublicId = user.avatarPublicId;
+
+    const newImage = await uploadImageToCloudinary(
+        image,
+        {
+            folder: "test-my-ecommerce/users", 
+        },
+    );
+
+    try {
+        await pool.query(
+            `
+            UPDATE users
+            SET
+                avatar = $1,
+                avatar_public_id = $2,
+                updated_at = NOW()
+            WHERE id = $3
+            `,
+            [
+                newImage.secureUrl,
+                newImage.publicId,
+                userId,
+            ],
+        );
+
+    } catch (error) {
+
+        try {
+            await deleteImageFromCloudinary(
+                newImage.publicId,
+            );
+        } catch (cleanupError) {
+            console.error(
+                "Failed to cleanup newly uploaded Cloudinary image:",
+                cleanupError,
+            );
+        }
+
+        throw error;
+    }
+    if (oldAvatarPublicId) {
+
+        try {
+            await deleteImageFromCloudinary(
+                oldAvatarPublicId,
+            );
+
+        } catch (cleanupError) {
+            console.error(
+                "Failed to delete previous avatar from Cloudinary:",
+                cleanupError,
+            );
+        }
+    }
+};
+
+
+export { registerUserService, getCurrentUserService, updateProfileImageService };

@@ -5,12 +5,12 @@ import { string } from "zod";
 
 export interface AuthPayload extends JwtPayload{
     id: string;
-    role: "user" | "admin";
+    role?: "user" | "admin";
 }
 
 type JWTPayload = {
     id: string;
-    role: "user" | "admin";
+    role?: "user" | "admin";
     selector?: string
 }
 

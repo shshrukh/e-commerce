@@ -27,7 +27,7 @@ type CurrentUserDetails = {
     id: string;
     first_name: string;
     last_name: string | null;
-    avatar: string | undefined;
+    avatar_url: string | undefined;
     email: string;
 }
 
@@ -106,9 +106,9 @@ const getCurrentUserService = async (payload: AuthPayload): Promise<CurrentUserD
         u.id,
         u.first_name,
         u.last_name,
-        u.avatar,
+        u.avatar_url,
         u.email
-        FROM users u
+        FROM users AS u
         WHERE u.id = $1`,
         [userId]
     )
@@ -119,10 +119,10 @@ const getCurrentUserService = async (payload: AuthPayload): Promise<CurrentUserD
 
     const data: CurrentUserDetails = user.rows[0];
 
-    if(!data.avatar){
-        data.avatar = data.first_name.charAt(0);
+    if(!data.avatar_url){
+        data.avatar_url = data.first_name.charAt(0);
         if(data.last_name){
-            data.avatar += data.last_name.charAt(0);
+            data.avatar_url += data.last_name.charAt(0);
         }
     }
     

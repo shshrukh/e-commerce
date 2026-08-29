@@ -11,11 +11,13 @@ import type { JwtPayload } from "jsonwebtoken";
 
 
 
-type LoginUser = {
-    email: string,
-    password: string,
-    ipAddress?: string;
-    userAgent?: string;
+type LoginUserCredentials = {
+    email: string;
+    password: string;
+    ip_address: string;
+    device_name: string;
+    location: string;
+    user_agent: string;
 }
 
 type LoginResult = {
@@ -23,36 +25,47 @@ type LoginResult = {
     refreshToken: string;
 };
 
-const loginAuthService = async (payload: LoginUser): Promise<LoginResult> => {
+const loginAuthService = async (payload: LoginUserCredentials): Promise<LoginResult> => {
 
-    const { email, password, ipAddress, userAgent } = payload
+    const { email, password, ip_address, user_agent, device_name, location } = payload
 
     try {
 
-        const result = await pool.query(
-            `SELECT a.user_id, a.email, a.password_hash, u.role FROM auth AS a JOIN users AS u ON a.user_id = u.id WHERE a.email = $1`,
+        const result = await pool.query<{ id: string, role: "user" | "admin" }>(
+            `SELECT id, role FROM users WHERE email = $1`,
             [email]
         );
+        
+        const userRole = result.rows[0]?.role;
+        const userId = result.rows[0]?.id;
 
-        if (result.rowCount === 0) {
-            throw new UnauthorizedError("Invalid credentials");
+        if (!userId || !userRole) {
+            throw new UnauthorizedError("Invalid email or passowrd");
         }
 
-        const user = result.rows[0];
+        const credentialsResult = await pool.query<{ password_hash: string }>(
+            `SELECT password_hash
+            FROM user_credentials
+            WHERE user_id = $1`,
+            [userId]
+        );
+        const hash_password = credentialsResult.rows[0]?.password_hash
 
-        const isPasswordCorrect = await verifySecret(password, user.password_hash);
+        if (!hash_password) {
+            throw new UnauthorizedError("Invalid email");
+        }
+
+        const isPasswordCorrect = await verifySecret(password, hash_password);
 
         if (!isPasswordCorrect) {
             throw new UnauthorizedError("Invalid credentials");
         }
 
-        const userId = user.user_id;
-        const role = user.role;
 
         const access_token = generateJWTToken(
             {
                 id: userId,
-                role
+                role: userRole
             },
             process.env.ACCESSTOKENSECRET as string,
             {
@@ -61,11 +74,11 @@ const loginAuthService = async (payload: LoginUser): Promise<LoginResult> => {
                 audience: "test-audience-web"
             }
         );
-        const selector = crypto.randomBytes(16).toString("hex");
+        const selector = crypto.randomBytes(16).toString("hex") + Date.now();
         const refresh_token = generateJWTToken(
             {
                 id: userId,
-                role,
+                role: userRole,
                 selector
             },
             process.env.REFRESHTOKENSECRET as string,
@@ -79,7 +92,7 @@ const loginAuthService = async (payload: LoginUser): Promise<LoginResult> => {
             Date.now() + (7 * 24 * 60 * 60 * 1000)
         )
 
-        const registerUser = await pool.query("INSERT INTO sessions (user_id, refresh_token_hash, ip_address, user_agent, expires_at, selector) VALUES( $1, $2, $3, $4, $5, $6)", [userId, hashRefreshToken, ipAddress, userAgent, refreshTokenExpire, selector]);
+        const registerUser = await pool.query("INSERT INTO sessions (user_id, selector, refresh_token_hash, ip_address, user_agent, device_name, location, expire_at) VALUES( $1, $2, $3, $4, $5, $6, $7, $8)", [userId, selector, hashRefreshToken, ip_address, user_agent, device_name,location, refreshTokenExpire]);
 
         if (registerUser.rowCount === 0) {
             throw new InternalServerError("Failed to login user, plese try again letter");
@@ -99,12 +112,12 @@ const loginAuthService = async (payload: LoginUser): Promise<LoginResult> => {
             throw err;
         }
 
-        throw new InternalServerError("Failed to login user");
+        throw  err;
     }
 }
 
 
-const refreshTokenService = async (refreshToken: string, ipAddress: string, userAgent: string): Promise< JwtPayload > => {
+const refreshTokenService = async (refreshToken: string, ipAddress: string, userAgent: string): Promise<JwtPayload> => {
 
     if (!refreshToken) {
         throw new UnauthorizedError("Refresh token is required");
@@ -252,9 +265,9 @@ const refreshTokenService = async (refreshToken: string, ipAddress: string, user
             }
         );
 
-         await client.query("COMMIT");
+        await client.query("COMMIT");
 
-         return {
+        return {
             accessToken: newAccessToken,
             refreshToken: newRefreshToken,
         };
@@ -263,7 +276,7 @@ const refreshTokenService = async (refreshToken: string, ipAddress: string, user
         await client.query("ROLLBACK");
 
         throw error;
-    } finally{
+    } finally {
         client.release();
     }
 

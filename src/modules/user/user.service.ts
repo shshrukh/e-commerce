@@ -6,6 +6,7 @@ import { hashSecret } from "../../utils/hash.js";
 import type { AuthPayload } from "../../utils/JWTToken.js";
 import { uploadImageToCloudinary, deleteImageFromCloudinary } from "../../utils/uploadImageCloudinary.js";
 import { NotFoundError } from "../../Errors/NotFoundError.js";
+import { log } from "node:console";
 
 type RegisterUserPayload = {
     first_name: string;
@@ -15,18 +16,11 @@ type RegisterUserPayload = {
 };
 
 type RegisteredUser = {
-    id: number;
+    id: string;
     first_name: string;
-    last_name?: string | null;
+    last_name?: string | null | undefined;
     email: string;
     role: string
-};
-
-type CreatedUser = {
-    id: number;
-    first_name: string;
-    last_name: string | null;
-    role: string;
 };
 
 type CurrentUserDetails = {
@@ -45,14 +39,14 @@ type UpdateProfilePayload = {
 
 const registerUserService = async (payload: RegisterUserPayload): Promise<RegisteredUser> => {
     const { first_name, last_name, email, password } = payload;
-
+  
     const existingUser = await pool.query<{ id: number }>(
-        "SELECT id FROM auth WHERE email = $1",
+        "SELECT id FROM users WHERE email = $1",
         [email]
     );
 
-
-    if (existingUser.rowCount && existingUser.rowCount > 0) {
+    // if the user exists and email is verify then not allow if email exist not verify then we will allow. (NOTE)
+    if (existingUser.rowCount && existingUser.rowCount > 0 ) {
         throw new ConflictError("User with this email already exists");
     }
 
@@ -61,25 +55,26 @@ const registerUserService = async (payload: RegisterUserPayload): Promise<Regist
     try {
         await client.query("BEGIN");
 
-        const userResult = await client.query<CreatedUser>(
-            "INSERT INTO users (first_name, last_name) VALUES ($1, $2) RETURNING id, first_name, last_name, role",
-            [first_name, last_name ?? null]
+        const userResult = await client.query<RegisteredUser>(
+            "INSERT INTO users (first_name, last_name, email) VALUES ($1, $2, $3) RETURNING id, first_name, last_name, role, email",
+            [first_name, last_name ?? null, email]
         );
 
-        const user: CreatedUser | undefined = userResult.rows[0];
-
+        const user = userResult.rows[0];
+        console.log(user,"this is user created by ");
+        
         if (!user) {
             throw new InternalServerError("Unable to create user");
         }
-
+        
         const userId = user.id;
         const role = user.role;
 
         const passwordHash = await hashSecret(password);
 
         await client.query(
-            "INSERT INTO auth (user_id, email, password_hash) VALUES ($1, $2, $3)",
-            [userId, email, passwordHash]
+            "INSERT INTO user_credentials(user_id, password_hash) VALUES ($1, $2)",
+            [userId, passwordHash]
         );
 
         await client.query("COMMIT");
@@ -97,15 +92,7 @@ const registerUserService = async (payload: RegisterUserPayload): Promise<Regist
     } catch (error) {
         await client.query("ROLLBACK");
 
-        if (error instanceof ConflictError) {
-            throw error;
-        }
-
-        if (error instanceof Error && "code" in error && error.code === "23505") {
-            throw new ConflictError("User with this email already exists");
-        }
-
-        throw new InternalServerError("Failed to register user");
+        throw error;
     } finally {
         client.release();
     }
@@ -120,9 +107,8 @@ const getCurrentUserService = async (payload: AuthPayload): Promise<CurrentUserD
         u.first_name,
         u.last_name,
         u.avatar,
-        a.email
+        u.email
         FROM users u
-        JOIN auth a ON a.user_id = u.id
         WHERE u.id = $1`,
         [userId]
     )

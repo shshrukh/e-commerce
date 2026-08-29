@@ -2,20 +2,39 @@ import { asyncHandler } from "../../handlers/AsyncHandlder.js";
 import { loginAuthService, refreshTokenService } from "./auth.service.js";
 import type { NextFunction, Request, Response } from "express";
 import { UnauthorizedError } from "../../Errors/UnauthorizedError.js";
+import { UAParser } from "ua-parser-js";
+import { BedRequestError } from "../../Errors/BedRequestError.js";
+import { log } from "console";
 
 
 
 const loginAuth = asyncHandler(async (req: Request, res: Response) => {
 
     const { email, password } = req.body;
-    const ipAddress = req.ip as string;
-    const userAgent = req.get("User-agent") as string;
+
+    if( typeof email !== "string" || typeof password !== "string"  ){
+        throw new BedRequestError("email or password are missing")
+    }
+    const ip_address = req.ip;
+
+    if(!ip_address){
+        throw new UnauthorizedError("Ip address is invalid or can't get the ip address")
+    }
+
+    const user_agent = req.get("User-agent") ?? "Unknown";
+    const parser = new UAParser(user_agent)
+    const browser = parser.getBrowser().name ?? "Unknown Browser";
+    const os = parser.getOS().name ?? "Unknown OS";
+    const device_name = `${browser} on ${os}`;
+    const location = "Unknown";
 
     const payload = {
         email,
         password,
-        ipAddress,
-        userAgent
+        ip_address,
+        device_name,
+        location,
+        user_agent,
     }
     const result = await loginAuthService(payload);
     const { refreshToken, accessToken } = result

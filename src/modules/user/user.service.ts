@@ -166,7 +166,7 @@ const updateProfileImageService = async (payload:UpdateProfilePayload ): Promise
             `
             UPDATE users
             SET
-                avatar = $1,
+                avatar_url = $1,
                 avatar_public_id = $2,
                 updated_at = NOW()
             WHERE id = $3

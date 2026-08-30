@@ -6,6 +6,7 @@ import { ValidationError } from "../Errors/ValidationError.js";
 
 const createImageUploadMiddleware = (
     maxFileSizeInMB: number,
+    fileLimit: number,
     allowedMimeTypes: string[],
 ): multer.Multer => {
 
@@ -13,7 +14,7 @@ const createImageUploadMiddleware = (
 
     const uploadLimits: Options["limits"] = {
         fileSize: maxFileSizeInMB * 1024 * 1024,
-        files: 1,
+        files: fileLimit,
         fields: 10,
         parts: 11,
     };
@@ -42,7 +43,8 @@ const createImageUploadMiddleware = (
     });
 };
 
-const uploadProductImage = createImageUploadMiddleware(
+const uploadProfileImage = createImageUploadMiddleware(
+    1,
     1,
     [
         "image/jpeg",
@@ -51,4 +53,4 @@ const uploadProductImage = createImageUploadMiddleware(
     ],
 );
 
-export { uploadProductImage };
+export { uploadProfileImage };

@@ -157,8 +157,17 @@ const updateProfileImageService = async (payload:UpdateProfilePayload ): Promise
     const newImage = await uploadImageToCloudinary(
         image,
         {
-            folder: "test-my-ecommerce/users", 
-        },
+            folder: "test-my-ecommerce/users-profile", 
+            transformation: [
+                {
+                    width: 300,
+                    height: 300,
+                    crop: "fill",
+                    gravity: "face"
+                }
+            ]
+        }
+        
     );
 
     try {

@@ -1,5 +1,6 @@
 import type { ErrorRequestHandler } from "express";
 import { AppError } from "../Errors/AppError.js";
+import multer from "multer";
 
 const isProduction = process.env.NODE_ENV === "production";
 
@@ -19,6 +20,44 @@ const errorMiddleware: ErrorRequestHandler = (err, req, res, next) => {
         details = err.details;
     }
 
+
+    // -------------------------
+    // Multer errors
+    // -------------------------
+    else if (err instanceof multer.MulterError) {
+        errorName = "MulterError";
+
+        switch (err.code) {
+            case "LIMIT_FILE_SIZE":
+                statusCode = 400;
+                message = "Uploaded file is too large.";
+                break;
+
+            case "LIMIT_FILE_COUNT":
+                statusCode = 400;
+                message = "Too many files uploaded.";
+                break;
+
+            case "LIMIT_UNEXPECTED_FILE":
+                statusCode = 400;
+                message = `Unexpected file field: ${err.field}.`;
+                break;
+
+            case "LIMIT_FIELD_COUNT":
+                statusCode = 400;
+                message = "Too many form fields.";
+                break;
+
+            case "LIMIT_PART_COUNT":
+                statusCode = 400;
+                message = "Too many form parts.";
+                break;
+
+            default:
+                statusCode = 400;
+                message = "Invalid file upload.";
+        }
+    }
     // -------------------------
     // PostgreSQL errors
     // -------------------------
@@ -28,7 +67,7 @@ const errorMiddleware: ErrorRequestHandler = (err, req, res, next) => {
         switch (err.code) {
             case "23502":
                 statusCode = 400;
-                message = err.message? err.message: "A required field is missing.";
+                message = err.message ? err.message : "A required field is missing.";
                 break;
 
             case "23505":

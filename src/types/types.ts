@@ -19,6 +19,12 @@ export type CloudinaryConfig = {
 export type CloudinaryUploadOptions = {
     folder?: string;
     publicId?: string;
+    transformation?: {
+        width?: number;
+        height?: number;
+        crop?: string;
+        gravity?: string;
+    }[];
 };
 
 export type CloudinaryUploadResult = {

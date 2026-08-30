@@ -20,6 +20,9 @@ export const uploadImageToCloudinary = (
             ...(options.publicId && {
                 public_id: options.publicId,
             }),
+            ...(options.transformation && {
+                transformation: options.transformation,
+            }),
         };
 
         const uploadStream = cloudinary.uploader.upload_stream(

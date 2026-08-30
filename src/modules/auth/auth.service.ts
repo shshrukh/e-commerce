@@ -25,7 +25,10 @@ type LoginResult = {
     accessToken: string;
     refreshToken: string;
 };
-
+type RefreshTokenResponse = {
+    accessToken: string;
+    refreshToken: string;
+};
 const loginAuthService = async (payload: LoginUserCredentials): Promise<LoginResult> => {
 
     const { email, password, ip_address, user_agent, device_name, location } = payload
@@ -118,93 +121,162 @@ const loginAuthService = async (payload: LoginUserCredentials): Promise<LoginRes
 }
 
 
-const refreshTokenService = async (refreshToken: string, user_agent: string, device_name: string, location: string,  ip_address: string): Promise<JwtPayload> => {
+const refreshTokenService = async (
+    refreshToken: string,
+    user_agent: string,
+    device_name: string,
+    location: string,
+    ip_address: string
+): Promise<RefreshTokenResponse> => {
 
+    // 1. Check refresh token
     if (!refreshToken) {
         throw new UnauthorizedError("Refresh token is required");
     }
 
-    const JWTUser = verifyJWTToken(refreshToken, process.env.REFRESHTOKENSECRET as string);
+    // 2. Verify JWT
+    const JWTUser = verifyJWTToken(
+        refreshToken,
+        process.env.REFRESHTOKENSECRET as string
+    );
 
-    if (!JWTUser.id || !JWTUser?.selector) {
+    if (!JWTUser.id || !JWTUser.selector) {
         throw new UnauthorizedError("Invalid refresh token");
     }
 
-    const selectorId = JWTUser.selector;
     const userId = JWTUser.id;
+    const selectorId = JWTUser.selector;
 
     const client = await pool.connect();
+
     try {
         await client.query("BEGIN");
+
+        // 3. Find session
         const sessionData = await client.query<{
             id: string;
             user_id: string;
             selector: string;
             refresh_token_hash: string;
-            ip_address: string;
-            user_agent: string;
-            device_name: string;
-            location: string;
+            ip_address: string | null;
+            user_agent: string | null;
+            device_name: string | null;
+            location: string | null;
             expire_at: Date;
             last_use_at: Date | null;
             revoked_at: Date | null;
             revoked_reason: string | null;
         }>(
-            `SELECT id, user_id, selector, refresh_token_hash, ip_address, user_agent, device_name, location, expire_at, last_use_at, revoked_at, revoked_reason FROM sessions WHERE selector = $1 AND user_id = $2`,
+            `
+            SELECT
+                id,
+                user_id,
+                selector,
+                refresh_token_hash,
+                ip_address,
+                user_agent,
+                device_name,
+                location,
+                expire_at,
+                last_use_at,
+                revoked_at,
+                revoked_reason
+            FROM sessions
+            WHERE selector = $1
+              AND user_id = $2
+            `,
             [selectorId, userId]
-        )
+        );
+
         const session = sessionData.rows[0];
 
         if (!session) {
-            throw new UnauthorizedError("Invalid token or expire token");
+            throw new UnauthorizedError(
+                "Invalid refresh token"
+            );
         }
 
-        const { expire_at, last_use_at, revoked_at, revoked_reason, user_id } = session;
-
-        if (expire_at <= new Date()) {
+        // 4. Check expiration
+        if (session.expire_at <= new Date()) {
             throw new UnauthorizedError(
                 "Refresh token is expired. Please login again"
             );
         }
 
-        if (last_use_at !== null) {
+        // 5. Check if already used
+        if (session.last_use_at !== null) {
             throw new UnauthorizedError(
                 "Refresh token has already been used. Please login again"
             );
         }
 
-        if (revoked_at !== null ) {
+        // 6. Check if revoked
+        if (session.revoked_at !== null) {
             throw new UnauthorizedError(
                 "Refresh token has already been revoked. Please login again"
             );
-        };
+        }
 
-        await client.query(
-            `
-        UPDATE sessions
-        SET
-            last_use_at = NOW(),
-            revoked_at = NOW(),
-            revoked_reason = 'refresh_token_rotation'
-        WHERE selector = $1
-          AND user_id = $2
-          AND revoked_at IS NULL
-        `,
-            [selectorId, userId]
+        // 7. Verify refresh token against stored hash
+        const isValidToken = await verifySecret(
+            refreshToken,
+            session.refresh_token_hash
         );
 
-        const user = await client.query<{id:string, role: "user" | "admin"}>(
-            `SELECT id, role FROM users WHERE id = $1`,
-            [userId]
-        )
-        const userData  = user.rows[0];
-        if(!userData){
-            throw new NotFoundError("user is not found with this JWT refresh token")
+        if (!isValidToken) {
+            throw new UnauthorizedError(
+                "Invalid refresh token"
+            );
         }
+
+        // 8. Get current user
+        const userResult = await client.query<{
+            id: string;
+            role: UserRole;
+        }>(
+            `
+            SELECT id, role
+            FROM users
+            WHERE id = $1
+            `,
+            [userId]
+        );
+
+        const user = userResult.rows[0];
+
+        if (!user) {
+            throw new NotFoundError(
+                "User not found"
+            );
+        }
+
+        // 9. Atomically consume old session
+        const revokedSession = await client.query(
+            `
+            UPDATE sessions
+            SET
+                last_use_at = NOW(),
+                revoked_at = NOW(),
+                revoked_reason = 'refresh_token_rotation'
+            WHERE id = $1
+              AND revoked_at IS NULL
+              AND last_use_at IS NULL
+            RETURNING id
+            `,
+            [session.id]
+        );
+
+        if (revokedSession.rowCount !== 1) {
+            throw new UnauthorizedError(
+                "Refresh token has already been used or revoked"
+            );
+        }
+
+        // 10. Generate new access token
         const access_token = generateJWTToken(
             {
-                id: userId,
-                role: userData.role
+                id: user.id,
+                role: user.role
             },
             process.env.ACCESSTOKENSECRET as string,
             {
@@ -213,65 +285,79 @@ const refreshTokenService = async (refreshToken: string, user_agent: string, dev
                 audience: "test-audience-web"
             }
         );
-        const selector = crypto.randomBytes(16).toString("hex");
-        const refresh_token = generateJWTToken(
+
+        // 11. Generate new refresh-token selector
+        const selector = crypto
+            .randomBytes(16)
+            .toString("hex");
+
+        // 12. Generate new refresh token
+        const newRefreshToken = generateJWTToken(
             {
-                id: userId,
-                role: userData.role,
+                id: user.id,
+                role: user.role,
                 selector
             },
             process.env.REFRESHTOKENSECRET as string,
             {
-                expiresIn: "15d",
+                expiresIn: "7d"
             }
         );
 
-        const hashRefreshToken = await hashSecret(refresh_token);
-        const refreshTokenExpire = new Date(
-            Date.now() + (7 * 24 * 60 * 60 * 1000)
+        // 13. Hash new refresh token
+        const newRefreshTokenHash = await hashSecret(
+            newRefreshToken
         );
 
+        // 14. Database expiration
+        const refreshTokenExpire = new Date(
+            Date.now() + 7 * 24 * 60 * 60 * 1000
+        );
+
+        // 15. Create new session
         await client.query(
             `
-        INSERT INTO sessions (
-            user_id,
-            selector,
-            refresh_token_hash,
-            ip_address,
-            user_agent,
-            device_name,
-            location,
-            expire_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        `,
-            [
-                userId,
+            INSERT INTO sessions (
+                user_id,
                 selector,
-                hashRefreshToken,
+                refresh_token_hash,
+                ip_address,
+                user_agent,
+                device_name,
+                location,
+                expire_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            `,
+            [
+                user.id,
+                selector,
+                newRefreshTokenHash,
                 ip_address,
                 user_agent,
                 device_name,
                 location,
                 refreshTokenExpire
             ]
-
         );
+
+        // 16. Commit everything
         await client.query("COMMIT");
 
+        // 17. Return new tokens
         return {
             accessToken: access_token,
-            refreshToken: refresh_token
-        }
+            refreshToken: newRefreshToken
+        };
+
     } catch (error) {
         await client.query("ROLLBACK");
         throw error;
+
     } finally {
         client.release();
     }
-
-
-}
+};
 
 
 export { loginAuthService, refreshTokenService }

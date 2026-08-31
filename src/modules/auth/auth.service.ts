@@ -5,7 +5,6 @@ import { generateJWTToken, verifyJWTToken } from "../../utils/JWTToken.js";
 import { hashSecret, verifySecret } from "../../utils/hash.js";
 import { InternalServerError } from "../../Errors/InternalServerError.js";
 import crypto from "node:crypto";
-import type { JwtPayload } from "jsonwebtoken";
 import { NotFoundError } from "../../Errors/NotFoundError.js";
 
 
@@ -29,6 +28,8 @@ type RefreshTokenResponse = {
     accessToken: string;
     refreshToken: string;
 };
+
+
 const loginAuthService = async (payload: LoginUserCredentials): Promise<LoginResult> => {
 
     const { email, password, ip_address, user_agent, device_name, location } = payload
@@ -120,7 +121,6 @@ const loginAuthService = async (payload: LoginUserCredentials): Promise<LoginRes
     }
 }
 
-
 const refreshTokenService = async (
     refreshToken: string,
     user_agent: string,
@@ -129,12 +129,11 @@ const refreshTokenService = async (
     ip_address: string
 ): Promise<RefreshTokenResponse> => {
 
-    // 1. Check refresh token
     if (!refreshToken) {
-        throw new UnauthorizedError("Refresh token is required");
+        throw new UnauthorizedError("Invalid refresh token");
     }
 
-    // 2. Verify JWT
+    // 1. Verify JWT signature and expiration
     const JWTUser = verifyJWTToken(
         refreshToken,
         process.env.REFRESHTOKENSECRET as string
@@ -152,16 +151,12 @@ const refreshTokenService = async (
     try {
         await client.query("BEGIN");
 
-        // 3. Find session
-        const sessionData = await client.query<{
+        // 2. Find and lock the session
+        const sessionResult = await client.query<{
             id: string;
             user_id: string;
             selector: string;
             refresh_token_hash: string;
-            ip_address: string | null;
-            user_agent: string | null;
-            device_name: string | null;
-            location: string | null;
             expire_at: Date;
             last_use_at: Date | null;
             revoked_at: Date | null;
@@ -173,10 +168,6 @@ const refreshTokenService = async (
                 user_id,
                 selector,
                 refresh_token_hash,
-                ip_address,
-                user_agent,
-                device_name,
-                location,
                 expire_at,
                 last_use_at,
                 revoked_at,
@@ -184,52 +175,41 @@ const refreshTokenService = async (
             FROM sessions
             WHERE selector = $1
               AND user_id = $2
+            FOR UPDATE
             `,
             [selectorId, userId]
         );
 
-        const session = sessionData.rows[0];
+        const session = sessionResult.rows[0];
 
         if (!session) {
-            throw new UnauthorizedError(
-                "Invalid refresh token"
-            );
+            throw new UnauthorizedError("Invalid refresh token");
         }
 
-        // 4. Check expiration
+        // 3. Check expiration
         if (session.expire_at <= new Date()) {
-            throw new UnauthorizedError(
-                "Refresh token is expired. Please login again"
-            );
+            throw new UnauthorizedError("Invalid refresh token");
         }
 
-        // 5. Check if already used
-        if (session.last_use_at !== null) {
-            throw new UnauthorizedError(
-                "Refresh token has already been used. Please login again"
-            );
+        // 4. Check whether token was already used/revoked
+        if (
+            session.last_use_at !== null ||
+            session.revoked_at !== null
+        ) {
+            throw new UnauthorizedError("Invalid refresh token");
         }
 
-        // 6. Check if revoked
-        if (session.revoked_at !== null) {
-            throw new UnauthorizedError(
-                "Refresh token has already been revoked. Please login again"
-            );
-        }
-
-        // 7. Verify refresh token against stored hash
-        const isValidToken = await verifySecret(
+        // 5. Verify the actual refresh token
+        const validRefreshToken = await verifySecret(
             refreshToken,
             session.refresh_token_hash
         );
 
-        if (!isValidToken) {
-            throw new UnauthorizedError(
-                "Invalid refresh token"
-            );
+        if (!validRefreshToken) {
+            throw new UnauthorizedError("Invalid refresh token");
         }
 
-        // 8. Get current user
+        // 6. Get current user information from DB
         const userResult = await client.query<{
             id: string;
             role: UserRole;
@@ -245,13 +225,11 @@ const refreshTokenService = async (
         const user = userResult.rows[0];
 
         if (!user) {
-            throw new NotFoundError(
-                "User not found"
-            );
+            throw new NotFoundError("User not found");
         }
 
-        // 9. Atomically consume old session
-        const revokedSession = await client.query(
+        // 7. Consume old refresh-token session
+        const revokeResult = await client.query(
             `
             UPDATE sessions
             SET
@@ -266,55 +244,53 @@ const refreshTokenService = async (
             [session.id]
         );
 
-        if (revokedSession.rowCount !== 1) {
-            throw new UnauthorizedError(
-                "Refresh token has already been used or revoked"
-            );
+        if (revokeResult.rowCount !== 1) {
+            throw new UnauthorizedError("Invalid refresh token");
         }
 
-        // 10. Generate new access token
-        const access_token = generateJWTToken(
+        // 8. Generate new access token
+        const accessToken = generateJWTToken(
             {
                 id: user.id,
-                role: user.role
+                role: user.role,
             },
             process.env.ACCESSTOKENSECRET as string,
             {
                 expiresIn: "15m",
                 issuer: "test-web-app",
-                audience: "test-audience-web"
+                audience: "test-audience-web",
             }
         );
 
-        // 11. Generate new refresh-token selector
-        const selector = crypto
+        // 9. Generate new selector
+        const newSelector = crypto
             .randomBytes(16)
             .toString("hex");
 
-        // 12. Generate new refresh token
+        // 10. Generate new refresh token
         const newRefreshToken = generateJWTToken(
             {
                 id: user.id,
                 role: user.role,
-                selector
+                selector: newSelector,
             },
             process.env.REFRESHTOKENSECRET as string,
             {
-                expiresIn: "7d"
+                expiresIn: "7d",
             }
         );
 
-        // 13. Hash new refresh token
+        // 11. Hash new refresh token
         const newRefreshTokenHash = await hashSecret(
             newRefreshToken
         );
 
-        // 14. Database expiration
-        const refreshTokenExpire = new Date(
+        // 12. New session expiration
+        const newExpireAt = new Date(
             Date.now() + 7 * 24 * 60 * 60 * 1000
         );
 
-        // 15. Create new session
+        // 13. Create new session
         await client.query(
             `
             INSERT INTO sessions (
@@ -331,23 +307,23 @@ const refreshTokenService = async (
             `,
             [
                 user.id,
-                selector,
+                newSelector,
                 newRefreshTokenHash,
                 ip_address,
                 user_agent,
                 device_name,
                 location,
-                refreshTokenExpire
+                newExpireAt,
             ]
         );
 
-        // 16. Commit everything
+        // 14. Commit rotation
         await client.query("COMMIT");
 
-        // 17. Return new tokens
+        // 15. Return new tokens
         return {
-            accessToken: access_token,
-            refreshToken: newRefreshToken
+            accessToken,
+            refreshToken: newRefreshToken,
         };
 
     } catch (error) {

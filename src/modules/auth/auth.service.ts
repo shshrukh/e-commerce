@@ -1,11 +1,14 @@
 
 import { pool } from "../../config/db.js";
 import { UnauthorizedError } from "../../Errors/UnauthorizedError.js";
-import { generateJWTToken, verifyJWTToken } from "../../utils/JWTToken.js";
+import { generateJWTToken, verifyJWTToken, type AuthPayload } from "../../utils/JWTToken.js";
 import { hashSecret, verifySecret } from "../../utils/hash.js";
 import { InternalServerError } from "../../Errors/InternalServerError.js";
 import crypto from "node:crypto";
 import { NotFoundError } from "../../Errors/NotFoundError.js";
+import type { JwtPayload } from "jsonwebtoken";
+import { BedRequestError } from "../../Errors/BedRequestError.js";
+import { ConflictError } from "../../Errors/ConflictError.js";
 
 
 
@@ -29,6 +32,10 @@ type RefreshTokenResponse = {
     refreshToken: string;
 };
 
+type changePasswordPaylod = {
+    oldPassword: string;
+    newPassword: string;
+}
 
 const loginAuthService = async (payload: LoginUserCredentials): Promise<LoginResult> => {
 
@@ -335,5 +342,160 @@ const refreshTokenService = async (
     }
 };
 
+const changePasswordService = async (payload: changePasswordPaylod, JWTPalyload: AuthPayload): Promise<RefreshTokenResponse> => {
 
-export { loginAuthService, refreshTokenService }
+    const { newPassword, oldPassword } = payload;
+    const { id, role } = JWTPalyload;
+    const client = await pool.connect();
+    try {
+        await client.query("BEGIN");
+
+        const userData = await client.query<{ id: string, role: "admin" | "user" }>(`SELECT id, role FROM users WHERE id  = $1`, [id]);
+        const dataBaseData = userData.rows[0];
+
+        if (!dataBaseData) {
+            throw new NotFoundError("user not found");
+        };
+
+        const userCredentials = await client.query<{
+            password_hash: string;
+        }>(`SELECT password_hash FROM user_credentials WHERE user_id = $1`, [id]);
+
+        const userCredentialsFromDataBase = userCredentials.rows[0];
+
+        if (!userCredentialsFromDataBase) {
+            throw new NotFoundError("user not found with these credentials");
+        }
+
+        const { password_hash } = userCredentialsFromDataBase;
+
+        const isPasswordCorrect = await verifySecret(oldPassword, password_hash);
+
+        if (!isPasswordCorrect) {
+            // NOT mail or send the notification your want to change the passowd but credinetials are not correct
+            throw new BedRequestError("passowrd is not correct");
+
+        }
+
+        if (oldPassword === newPassword) {
+            throw new ConflictError("try new password");
+        }
+
+        const newPasswordHash = await hashSecret(newPassword);
+
+        const updateSessionCredientials = await client.query<{ id: string }>(
+            `UPDATE user_credentials
+            SET password_hash = $1, password_changed_at = NOW()
+            WHERE user_id = $2
+            RETURNING user_id
+            `,
+            [newPasswordHash, id]
+        )
+        const updateCredentials = updateSessionCredientials.rows[0];
+
+        if (!updateCredentials) {
+            throw new Error("Internal server error")
+        }
+
+       const dataOne =  await client.query<{ id: string }>(
+            `UPDATE sessions
+        SET revoked_at = NOW(),
+        revoked_reason = 'password_changed'
+        WHERE user_id = $1
+        AND expire_at > NOW()
+        AND revoked_at IS NULL
+        RETURNING id`,
+            [id]
+        );
+        if(dataOne.rowCount === 0){
+            throw new Error("this is first rendom error")
+        }
+        const accessToken = generateJWTToken(
+            {
+                id: dataBaseData.id,
+                role: dataBaseData.role,
+            },
+            process.env.ACCESSTOKENSECRET as string,
+            {
+                expiresIn: "15m",
+                issuer: "test-web-app",
+                audience: "test-audience-web",
+            }
+        );
+
+        // 9. Generate new selector
+        const newSelector = crypto
+            .randomBytes(16)
+            .toString("hex");
+
+        // 10. Generate new refresh token
+        const newRefreshToken = generateJWTToken(
+            {
+                id: dataBaseData.id,
+                role: dataBaseData.role,
+                selector: newSelector,
+            },
+            process.env.REFRESHTOKENSECRET as string,
+            {
+                expiresIn: "7d",
+            }
+        );
+
+        // 11. Hash new refresh token
+        const newRefreshTokenHash = await hashSecret(
+            newRefreshToken
+        );
+
+        // 12. New session expiration
+        const newExpireAt = new Date(
+            Date.now() + 7 * 24 * 60 * 60 * 1000
+        );
+        let ipAddress;
+        let userAgent;
+        let deviceName;
+        let location;
+        // 13. Create new session
+        await client.query(
+            `
+            INSERT INTO sessions (
+                user_id,
+                selector,
+                refresh_token_hash,
+                ip_address,
+                user_agent,
+                device_name,
+                location,
+                expire_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            `,
+            [
+                dataBaseData.id,
+                newSelector,
+                newRefreshTokenHash,
+                ipAddress ?? null,
+                userAgent ?? null,
+                deviceName ?? null,
+                location ?? null,
+                newExpireAt,
+            ]
+        );
+        
+        await client.query("COMMIT");
+
+        // 15. Return new tokens
+        return {
+            accessToken,
+            refreshToken: newRefreshToken,
+        };
+
+    } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+    } finally {
+         client.release();
+    }
+
+};
+
+export { loginAuthService, refreshTokenService, changePasswordService }

@@ -4,7 +4,7 @@ import type { NextFunction, Request, Response } from "express";
 import { UnauthorizedError } from "../../Errors/UnauthorizedError.js";
 import { UAParser } from "ua-parser-js";
 import { BedRequestError } from "../../Errors/BedRequestError.js";
-
+import { changePasswordService } from "./auth.service.js";
 
 
 
@@ -52,7 +52,6 @@ const loginAuth = asyncHandler(async (req: Request, res: Response) => {
     });
 });
 
-
 const refreshToken = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
     const ip_address = req.ip ?? "Unknown"
     const user_agent = req.get("User-agent") ?? "Unknown";
@@ -67,9 +66,9 @@ const refreshToken = asyncHandler(async (req: Request, res: Response, next: Next
     if (typeof cookieRequestToken !== "string") {
         throw new UnauthorizedError("Refresh token not found");
     }
-   
-    
-    const token = await refreshTokenService(cookieRequestToken, user_agent, device_name, location, ip_address );
+
+
+    const token = await refreshTokenService(cookieRequestToken, user_agent, device_name, location, ip_address);
 
     const { accessToken, refreshToken } = token;
     res.cookie("refreshToken", refreshToken, {
@@ -85,4 +84,29 @@ const refreshToken = asyncHandler(async (req: Request, res: Response, next: Next
     });
 });
 
-export { loginAuth, refreshToken }
+
+const changePasswordController = asyncHandler(async(req: Request, res: Response, next: NextFunction) => {
+    const JWTPalyload = req.user;
+
+    if (!JWTPalyload) {
+        throw new UnauthorizedError("Invalid access token");
+    };
+    const {
+        oldPassword,
+        newPassword,
+    } = req.body;
+    const token = await changePasswordService({oldPassword, newPassword}, JWTPalyload);
+    const { accessToken, refreshToken } = token;
+    res.cookie("refreshToken", refreshToken, {
+        httpOnly: true,
+        secure: true,
+        sameSite: "strict",
+        maxAge: 7 * 24 * 60 * 60 * 1000
+    });
+    res.status(200).json({
+        success: true,
+        message: "password change successfully",
+        data: { accessToken }
+    });
+});
+export { loginAuth, refreshToken, changePasswordController }

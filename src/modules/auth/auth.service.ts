@@ -1,4 +1,3 @@
-
 import { pool } from "../../config/db.js";
 import { UnauthorizedError } from "../../Errors/UnauthorizedError.js";
 import { generateJWTToken, verifyJWTToken, type AuthPayload } from "../../utils/JWTToken.js";
@@ -6,10 +5,9 @@ import { hashSecret, verifySecret } from "../../utils/hash.js";
 import { InternalServerError } from "../../Errors/InternalServerError.js";
 import crypto from "node:crypto";
 import { NotFoundError } from "../../Errors/NotFoundError.js";
-import type { JwtPayload } from "jsonwebtoken";
 import { BedRequestError } from "../../Errors/BedRequestError.js";
 import { ConflictError } from "../../Errors/ConflictError.js";
-
+import type { StringValidation } from "zod/v3";
 
 
 
@@ -397,7 +395,7 @@ const changePasswordService = async (payload: changePasswordPaylod, JWTPalyload:
             throw new Error("Internal server error")
         }
 
-       const dataOne =  await client.query<{ id: string }>(
+        const dataOne = await client.query<{ id: string }>(
             `UPDATE sessions
         SET revoked_at = NOW(),
         revoked_reason = 'password_changed'
@@ -407,7 +405,7 @@ const changePasswordService = async (payload: changePasswordPaylod, JWTPalyload:
         RETURNING id`,
             [id]
         );
-        if(dataOne.rowCount === 0){
+        if (dataOne.rowCount === 0) {
             throw new Error("this is first rendom error")
         }
         const accessToken = generateJWTToken(
@@ -480,7 +478,7 @@ const changePasswordService = async (payload: changePasswordPaylod, JWTPalyload:
                 newExpireAt,
             ]
         );
-        
+
         await client.query("COMMIT");
 
         // 15. Return new tokens
@@ -493,9 +491,69 @@ const changePasswordService = async (payload: changePasswordPaylod, JWTPalyload:
         await client.query("ROLLBACK");
         throw error;
     } finally {
-         client.release();
+        client.release();
     }
 
 };
 
-export { loginAuthService, refreshTokenService, changePasswordService }
+const logoutService = async (
+    refreshToken: string,
+    user_agent: string,
+    device_name: string
+): Promise<void> => {
+    const verifyRefreshToken = verifyJWTToken(refreshToken, process.env.REFRESHTOKENSECRET as string);;
+    const {
+        id,
+        selector,
+    } = verifyRefreshToken
+
+    const user = await pool.query<{ id: string }>(
+        `SELECT id FROM users WHERE id = $1`,
+        [id]
+    )
+
+    const isUserExists = user.rows[0];
+
+    if(!isUserExists){
+        throw new NotFoundError("user not found");
+    }
+    
+    const sessions = await pool.query<{
+        refresh_token_hash: string;
+    }>(
+        `SELECT refresh_token_hash FROM sessions
+        WHERE user_id = $1
+        AND selector = $2
+        AND expire_at > NOW()
+        `,
+        [id, selector]
+    );
+
+    const dataBaseHashToken = sessions.rows[0];
+
+    if(!dataBaseHashToken){
+        throw new UnauthorizedError("token is not valid. login again");
+    }
+    const { refresh_token_hash } = dataBaseHashToken;
+    const isTokenValid = await verifySecret(refreshToken, refresh_token_hash);
+
+    if(!isTokenValid){
+        throw new UnauthorizedError("token is not valid. login again");
+    }
+
+    await pool.query(
+        `UPDATE sessions
+        SET revoked_at = NOW(),
+        revoked_reason = 'logout-device'
+        WHERE user_id = $1
+        AND expire_at > NOW()
+        AND revoked_at IS NULL
+        AND user_agent = $2
+        AND device_name = $3
+        RETURNING id`,
+        [id, user_agent, device_name]
+    )
+}
+
+
+export { loginAuthService, refreshTokenService, changePasswordService, logoutService };

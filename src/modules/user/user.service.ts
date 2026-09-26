@@ -6,7 +6,7 @@ import { hashSecret } from "../../utils/hash.js";
 import type { AuthPayload } from "../../utils/JWTToken.js";
 import { uploadImageToCloudinary, deleteImageFromCloudinary } from "../../utils/uploadImageCloudinary.js";
 import { NotFoundError } from "../../Errors/NotFoundError.js";
-import { log } from "node:console";
+import { myEmitter } from "../../events/eventEmitter.js";
 
 type RegisterUserPayload = {
     first_name: string;
@@ -61,7 +61,8 @@ const registerUserService = async (payload: RegisterUserPayload): Promise<Regist
         );
 
         const user = userResult.rows[0];
-        console.log(user,"this is user created by ");
+
+        myEmitter.emit("register-user", {email});
         
         if (!user) {
             throw new InternalServerError("Unable to create user");

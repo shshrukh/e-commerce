@@ -3,6 +3,7 @@ import { connectDB, closeDB} from "./config/db.js";
 import { runMigrations } from "./dataBase/migrations/migrate.js";
 import { connectRedis } from "./config/redis.js";
 import "./events/email.Event.js"
+import "./worker/email.worker.js"
 
 const port = Number(process.env.PORT ?? 3000);
 

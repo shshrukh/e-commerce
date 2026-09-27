@@ -7,6 +7,8 @@ import type { AuthPayload } from "../../utils/JWTToken.js";
 import { uploadImageToCloudinary, deleteImageFromCloudinary } from "../../utils/uploadImageCloudinary.js";
 import { NotFoundError } from "../../Errors/NotFoundError.js";
 import { myEmitter } from "../../events/eventEmitter.js";
+import { registerEmailQueue } from "../../queues/email.queue.js";
+import { confirmRegistration } from "../../emails/registerationEmail.js";
 
 type RegisterUserPayload = {
     first_name: string;
@@ -39,14 +41,14 @@ type UpdateProfilePayload = {
 
 const registerUserService = async (payload: RegisterUserPayload): Promise<RegisteredUser> => {
     const { first_name, last_name, email, password } = payload;
-  
+
     const existingUser = await pool.query<{ id: number }>(
         "SELECT id FROM users WHERE email = $1",
         [email]
     );
 
     // if the user exists and email is verify then not allow if email exist not verify then we will allow. (NOTE)
-    if (existingUser.rowCount && existingUser.rowCount > 0 ) {
+    if (existingUser.rowCount && existingUser.rowCount > 0) {
         throw new ConflictError("User with this email already exists");
     }
 
@@ -61,13 +63,17 @@ const registerUserService = async (payload: RegisterUserPayload): Promise<Regist
         );
 
         const user = userResult.rows[0];
-
-        myEmitter.emit("register-user", {email});
-        
+        const html = confirmRegistration(first_name, email, 12345);
+        // myEmitter.emit("register-user", {email, first_name});
+        await registerEmailQueue.add("register-user-email", {
+            email: email,
+            subject: "Welcome TO AURA NUTS",
+            html
+        });
         if (!user) {
             throw new InternalServerError("Unable to create user");
         }
-        
+
         const userId = user.id;
         const role = user.role;
 
@@ -120,19 +126,19 @@ const getCurrentUserService = async (payload: AuthPayload): Promise<CurrentUserD
 
     const data: CurrentUserDetails = user.rows[0];
 
-    if(!data.avatar_url){
+    if (!data.avatar_url) {
         data.avatar_url = data.first_name.charAt(0);
-        if(data.last_name){
+        if (data.last_name) {
             data.avatar_url += data.last_name.charAt(0);
         }
     }
-    
+
 
     return data
 
 };
 
-const updateProfileImageService = async (payload:UpdateProfilePayload ): Promise<void> => {
+const updateProfileImageService = async (payload: UpdateProfilePayload): Promise<void> => {
     const { userId, image } = payload;
 
     const userResult = await pool.query<{
@@ -158,7 +164,7 @@ const updateProfileImageService = async (payload:UpdateProfilePayload ): Promise
     const newImage = await uploadImageToCloudinary(
         image,
         {
-            folder: "test-my-ecommerce/users-profile", 
+            folder: "test-my-ecommerce/users-profile",
             transformation: [
                 {
                     width: 300,
@@ -168,7 +174,7 @@ const updateProfileImageService = async (payload:UpdateProfilePayload ): Promise
                 }
             ]
         }
-        
+
     );
 
     try {

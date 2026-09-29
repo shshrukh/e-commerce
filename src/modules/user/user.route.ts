@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { asyncHandler } from "../../handlers/AsyncHandlder.js";
 import { validateSchema } from "../../middlewares/zodValidation.middleware.js";
-import { getCurrentUser, registerUser, updateProfileUser } from "./user.controller.js";
+import { getCurrentUser, registerUser, updateProfileUser, verifyEmail } from "./user.controller.js";
 import { userDetailSchema } from "./user.validator.js";
 import { authMiddleware } from "../../middlewares/auth.middleware.js";
 import { uploadProfileImage } from "../../middlewares/multer.middleware.js";
@@ -9,6 +9,7 @@ import { uploadProfileImage } from "../../middlewares/multer.middleware.js";
 const userRoute = Router();
 
 userRoute.route("/register-user").post(validateSchema( userDetailSchema, "body"), asyncHandler(registerUser));
+userRoute.route("/verify-email").post(verifyEmail);
 userRoute.route("/current-user").get( authMiddleware, getCurrentUser);
 userRoute.route("/upate-profile").post(authMiddleware, uploadProfileImage.single("image"), updateProfileUser);
 

@@ -1,9 +1,10 @@
 import type { NextFunction, Request, Response } from "express";
-import { getCurrentUserService, registerUserService } from "./user.service.js";
+import { getCurrentUserService, registerUserService, verifyEmailService } from "./user.service.js";
 import { asyncHandler } from "../../handlers/AsyncHandlder.js";
 import { UnauthorizedError } from "../../Errors/UnauthorizedError.js";
 import { BedRequestError } from "../../Errors/BedRequestError.js";
 import { updateProfileImageService } from "./user.service.js";
+import { success } from "zod";
 
 const registerUser = async (req: Request, res: Response) => {
     const user = await registerUserService(req.body);
@@ -14,6 +15,20 @@ const registerUser = async (req: Request, res: Response) => {
         data: user,
     });
 };
+
+const verifyEmail = asyncHandler( async(req: Request, res: Response, next: NextFunction) => {
+    const {code, userId} = req.body;
+
+    if(!code || !userId){
+        throw new BedRequestError(`code and user Id is required`);
+    }
+    const verifyUserEmail = await verifyEmailService(userId, code);
+    res.status(201).json({
+        success: true,
+        message: "Email verify successfully"
+    })
+    
+})
 
 const getCurrentUser = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
     const payload = req.user;
@@ -54,4 +69,4 @@ const updateProfileUser = asyncHandler( async(req: Request, res: Response, next:
 
 });
 
-export { registerUser , getCurrentUser, updateProfileUser };
+export { registerUser , getCurrentUser, updateProfileUser, verifyEmail };

@@ -7,11 +7,12 @@ const emailRegisterWorker = new Worker(
     "registerEmailQueue",
     async(job)=>{
         if(job.name === "register-user-email"){
-            const {email, subject,  html } = job.data;
-            console.log("sending the email");
-            
-            await sendEmail(email, subject, html);
-            console.log("email send successfully");
+            try {
+                const {email, subject,  html } = job.data;
+                await sendEmail(email, subject, html);
+            } catch (error) {
+                throw error
+            }
             
         }
     }, 
@@ -19,6 +20,5 @@ const emailRegisterWorker = new Worker(
         connection: bullmqConnection
     }
 )
-console.log("Email worker is running");
 
 export { emailRegisterWorker };

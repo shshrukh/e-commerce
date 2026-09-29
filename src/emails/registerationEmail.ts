@@ -1,4 +1,4 @@
-function confirmRegistration(username: string, useremail: string, code: number) {
+function confirmRegistration(username: string, useremail: string, code: string) {
 return ` <div style="
      font-family: Arial, sans-serif; 
      max-width: 600px; 
@@ -34,7 +34,7 @@ Welcome to Aura Nuts, ${username}! 🥜 </h2>
     </div>
 
     <p>
-        This verification code will expire in 10 minutes.
+        This verification code will expire in 5 minutes.
     </p>
 
     <p style="font-size: 13px; color: #888;">

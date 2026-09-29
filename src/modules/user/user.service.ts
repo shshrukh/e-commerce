@@ -2,13 +2,17 @@ import { pool } from "../../config/db.js";
 import { ConflictError } from "../../Errors/ConflictError.js";
 import { InternalServerError } from "../../Errors/InternalServerError.js";
 import { UnauthorizedError } from "../../Errors/UnauthorizedError.js";
-import { hashSecret } from "../../utils/hash.js";
+import { hashSecret, verifySecret } from "../../utils/hash.js";
 import type { AuthPayload } from "../../utils/JWTToken.js";
 import { uploadImageToCloudinary, deleteImageFromCloudinary } from "../../utils/uploadImageCloudinary.js";
 import { NotFoundError } from "../../Errors/NotFoundError.js";
+import crypto from "crypto";
 import { myEmitter } from "../../events/eventEmitter.js";
 import { registerEmailQueue } from "../../queues/email.queue.js";
 import { confirmRegistration } from "../../emails/registerationEmail.js";
+import { sixDigitRendomNumber } from "../../utils/generateSixDigitNumber.js";
+import { da } from "zod/locales";
+import { ValidationError } from "../../Errors/ValidationError.js";
 
 type RegisterUserPayload = {
     first_name: string;
@@ -39,6 +43,7 @@ type UpdateProfilePayload = {
 }
 
 
+
 const registerUserService = async (payload: RegisterUserPayload): Promise<RegisteredUser> => {
     const { first_name, last_name, email, password } = payload;
 
@@ -47,7 +52,7 @@ const registerUserService = async (payload: RegisterUserPayload): Promise<Regist
         [email]
     );
 
-    // if the user exists and email is verify then not allow if email exist not verify then we will allow. (NOTE)
+
     if (existingUser.rowCount && existingUser.rowCount > 0) {
         throw new ConflictError("User with this email already exists");
     }
@@ -63,13 +68,7 @@ const registerUserService = async (payload: RegisterUserPayload): Promise<Regist
         );
 
         const user = userResult.rows[0];
-        const html = confirmRegistration(first_name, email, 12345);
-        // myEmitter.emit("register-user", {email, first_name});
-        await registerEmailQueue.add("register-user-email", {
-            email: email,
-            subject: "Welcome TO AURA NUTS",
-            html
-        });
+
         if (!user) {
             throw new InternalServerError("Unable to create user");
         }
@@ -83,22 +82,164 @@ const registerUserService = async (payload: RegisterUserPayload): Promise<Regist
             "INSERT INTO user_credentials(user_id, password_hash) VALUES ($1, $2)",
             [userId, passwordHash]
         );
+        const rendomNumber = sixDigitRendomNumber();
 
+        const emailVerificationTokenHash = await hashSecret(rendomNumber);
+        const emailTokenExp = new Date(Date.now() + 5 * 60 * 1000);
+        await client.query("INSERT INTO email_verification_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)",
+            [userId, emailVerificationTokenHash, emailTokenExp]
+        );
+
+        const html = confirmRegistration(first_name, email, rendomNumber);
+        await registerEmailQueue.add(
+            "register-user-email", {
+            email: email,
+            subject: "Welcome TO AURA NUTS",
+            html
+        },
+            {
+                attempts: 2,
+                backoff: {
+                    type: "exponential",
+                    delay: 5000
+                },
+                removeOnComplete: true,
+                removeOnFail: true
+            }
+        );
         await client.query("COMMIT");
 
         return {
             id: userId,
-            first_name: user.first_name,
-            last_name: user.last_name,
-            email,
-            role
-        };
-
-
+            email: email,
+            first_name: first_name,
+            last_name: last_name,
+            role: role
+        }
 
     } catch (error) {
         await client.query("ROLLBACK");
 
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
+const verifyEmailService = async (
+    userId: string,
+    code: string
+): Promise<void> => {
+    const client = await pool.connect();
+
+    try {
+        await client.query("BEGIN");
+
+        // 1. Find user and check email verification status
+        const userResult = await client.query<{
+            email_verified_at: Date | null;
+        }>(
+            `SELECT email_verified_at
+             FROM users
+             WHERE id = $1`,
+            [userId]
+        );
+
+        const user = userResult.rows[0];
+
+        if (!user) {
+            throw new NotFoundError("User not found");
+        }
+
+        if (user.email_verified_at !== null) {
+            throw new Error("Email is already verified");
+        }
+
+        // 2. Get the newest unverified OTP
+        const tokenResult = await client.query<{
+            user_id: string;
+            token_hash: string;
+            expires_at: Date;
+            verified_at: Date | null;
+            created_at: Date;
+        }>(
+            `SELECT user_id, token_hash, expires_at, verified_at, created_at
+             FROM email_verification_tokens
+             WHERE user_id = $1
+               AND verified_at IS NULL
+             ORDER BY created_at DESC
+             LIMIT 1`,
+            [userId]
+        );
+
+        const verificationToken = tokenResult.rows[0];
+
+        if (!verificationToken) {
+            throw new NotFoundError(
+                "Verification code not found"
+            );
+        }
+
+        // 3. Check OTP expiration
+        if (Date.now() > verificationToken.expires_at.getTime()) {
+            throw new ValidationError(
+                "OTP is expired. Please generate a new OTP."
+            );
+        }
+
+        // 4. Verify OTP
+        const isOTPCorrect = await verifySecret(
+            code,
+            verificationToken.token_hash
+        );
+
+        if (!isOTPCorrect) {
+            throw new ValidationError("The OTP is not valid");
+        }
+
+        // 5. Mark OTP as verified
+        const tokenUpdateResult = await client.query(
+            `UPDATE email_verification_tokens
+             SET verified_at = NOW()
+             WHERE id = (
+                 SELECT id
+                 FROM email_verification_tokens
+                 WHERE user_id = $1
+                   AND token_hash = $2
+                   AND verified_at IS NULL
+                 LIMIT 1
+             )`,
+            [userId, verificationToken.token_hash]
+        );
+
+        if (tokenUpdateResult.rowCount !== 1) {
+            throw new InternalServerError(
+                "Failed to verify the OTP"
+            );
+        }
+
+        // 6. Mark user's email as verified
+        const userUpdateResult = await client.query<{
+            email_verified_at: Date;
+        }>(
+            `UPDATE users
+             SET email_verified_at = NOW()
+             WHERE id = $1
+               AND email_verified_at IS NULL
+             RETURNING email_verified_at`,
+            [userId]
+        );
+
+        if (userUpdateResult.rowCount !== 1) {
+            throw new InternalServerError(
+                "Failed to verify the user's email"
+            );
+        }
+
+        // 7. Everything succeeded
+        await client.query("COMMIT");
+    } catch (error) {
+        await client.query("ROLLBACK");
         throw error;
     } finally {
         client.release();
@@ -226,4 +367,4 @@ const updateProfileImageService = async (payload: UpdateProfilePayload): Promise
 };
 
 
-export { registerUserService, getCurrentUserService, updateProfileImageService };
+export { registerUserService, getCurrentUserService, updateProfileImageService, verifyEmailService };

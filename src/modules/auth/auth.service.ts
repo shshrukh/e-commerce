@@ -41,18 +41,21 @@ const loginAuthService = async (payload: LoginUserCredentials): Promise<LoginRes
 
     try {
 
-        const result = await pool.query<{ id: string, role: "user" | "admin" }>(
-            `SELECT id, role FROM users WHERE email = $1`,
+        const result = await pool.query<{ id: string, role: "user" | "admin", email_verified_at: Date }>(
+            `SELECT id, role, email_verified_at FROM users WHERE email = $1`,
             [email]
         );
 
         const userRole = result.rows[0]?.role;
         const userId = result.rows[0]?.id;
+        const email_verified_at = result.rows[0]?.email_verified_at 
 
         if (!userId || !userRole) {
             throw new UnauthorizedError("Invalid email or passowrd");
         }
-
+        if(!email_verified_at){
+            throw new UnauthorizedError("User email is not verify, please verify your email")
+        }
         const credentialsResult = await pool.query<{ password_hash: string }>(
             `SELECT password_hash
             FROM user_credentials

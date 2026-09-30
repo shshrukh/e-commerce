@@ -54,7 +54,7 @@ const loginAuthService = async (payload: LoginUserCredentials): Promise<LoginRes
             throw new UnauthorizedError("Invalid email or passowrd");
         }
         if(!email_verified_at){
-            throw new UnauthorizedError("User email is not verify, please verify your email")
+            throw new UnauthorizedError("Email is not verified.");
         }
         const credentialsResult = await pool.query<{ password_hash: string }>(
             `SELECT password_hash

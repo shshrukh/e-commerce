@@ -17,12 +17,12 @@ const registerUser = async (req: Request, res: Response) => {
 };
 
 const verifyEmail = asyncHandler( async(req: Request, res: Response, next: NextFunction) => {
-    const {code, userId} = req.body;
+    const {code, email} = req.body;
 
-    if(!code || !userId){
+    if(!code || !email){
         throw new BedRequestError(`code and user Id is required`);
     }
-    const verifyUserEmail = await verifyEmailService(userId, code);
+    const verifyUserEmail = await verifyEmailService(email, code);
     res.status(201).json({
         success: true,
         message: "Email verify successfully"

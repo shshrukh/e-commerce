@@ -6,12 +6,9 @@ import { hashSecret, verifySecret } from "../../utils/hash.js";
 import type { AuthPayload } from "../../utils/JWTToken.js";
 import { uploadImageToCloudinary, deleteImageFromCloudinary } from "../../utils/uploadImageCloudinary.js";
 import { NotFoundError } from "../../Errors/NotFoundError.js";
-import crypto from "crypto";
-import { myEmitter } from "../../events/eventEmitter.js";
 import { registerEmailQueue } from "../../queues/email.queue.js";
 import { confirmRegistration } from "../../emails/registerationEmail.js";
 import { sixDigitRendomNumber } from "../../utils/generateSixDigitNumber.js";
-import { da } from "zod/locales";
 import { ValidationError } from "../../Errors/ValidationError.js";
 
 type RegisterUserPayload = {
@@ -127,7 +124,7 @@ const registerUserService = async (payload: RegisterUserPayload): Promise<Regist
 };
 
 const verifyEmailService = async (
-    userId: string,
+    email: string,
     code: string
 ): Promise<void> => {
     const client = await pool.connect();
@@ -135,35 +132,47 @@ const verifyEmailService = async (
     try {
         await client.query("BEGIN");
 
-        // 1. Find user and check email verification status
-        const userResult = await client.query<{
+        // 1. Find user by email
+        const userData = await client.query<{
+            id: string;
             email_verified_at: Date | null;
         }>(
-            `SELECT email_verified_at
+            `SELECT id, email_verified_at
              FROM users
-             WHERE id = $1`,
-            [userId]
+             WHERE email = $1`,
+            [email]
         );
 
-        const user = userResult.rows[0];
+        const user = userData.rows[0];
 
+        // User does not exist
         if (!user) {
             throw new NotFoundError("User not found");
         }
 
+        // Email is already verified
         if (user.email_verified_at !== null) {
-            throw new Error("Email is already verified");
+            throw new ConflictError("Email is already verified");
         }
 
-        // 2. Get the newest unverified OTP
+        const userId = user.id;
+
+        // 2. Get the latest unverified OTP
         const tokenResult = await client.query<{
+            id: number;
             user_id: string;
             token_hash: string;
             expires_at: Date;
             verified_at: Date | null;
             created_at: Date;
         }>(
-            `SELECT user_id, token_hash, expires_at, verified_at, created_at
+            `SELECT
+                id,
+                user_id,
+                token_hash,
+                expires_at,
+                verified_at,
+                created_at
              FROM email_verification_tokens
              WHERE user_id = $1
                AND verified_at IS NULL
@@ -176,14 +185,14 @@ const verifyEmailService = async (
 
         if (!verificationToken) {
             throw new NotFoundError(
-                "Verification code not found"
+                "Verification code not found. Please request a new code."
             );
         }
 
         // 3. Check OTP expiration
         if (Date.now() > verificationToken.expires_at.getTime()) {
             throw new ValidationError(
-                "OTP is expired. Please generate a new OTP."
+                "Verification code has expired. Please request a new code."
             );
         }
 
@@ -194,54 +203,51 @@ const verifyEmailService = async (
         );
 
         if (!isOTPCorrect) {
-            throw new ValidationError("The OTP is not valid");
+            throw new ValidationError(
+                "Invalid verification code."
+            );
         }
 
         // 5. Mark OTP as verified
         const tokenUpdateResult = await client.query(
             `UPDATE email_verification_tokens
              SET verified_at = NOW()
-             WHERE id = (
-                 SELECT id
-                 FROM email_verification_tokens
-                 WHERE user_id = $1
-                   AND token_hash = $2
-                   AND verified_at IS NULL
-                 LIMIT 1
-             )`,
-            [userId, verificationToken.token_hash]
+             WHERE id = $1
+               AND verified_at IS NULL`,
+            [verificationToken.id]
         );
 
         if (tokenUpdateResult.rowCount !== 1) {
             throw new InternalServerError(
-                "Failed to verify the OTP"
+                "Failed to verify the verification code."
             );
         }
 
         // 6. Mark user's email as verified
-        const userUpdateResult = await client.query<{
-            email_verified_at: Date;
-        }>(
+        const userUpdateResult = await client.query(
             `UPDATE users
              SET email_verified_at = NOW()
              WHERE id = $1
-               AND email_verified_at IS NULL
-             RETURNING email_verified_at`,
+               AND email_verified_at IS NULL`,
             [userId]
         );
 
         if (userUpdateResult.rowCount !== 1) {
             throw new InternalServerError(
-                "Failed to verify the user's email"
+                "Failed to verify the user's email."
             );
         }
 
         // 7. Everything succeeded
         await client.query("COMMIT");
+
     } catch (error) {
+        // Rollback anything done inside the transaction
         await client.query("ROLLBACK");
         throw error;
+
     } finally {
+        // Always return connection to the pool
         client.release();
     }
 };
